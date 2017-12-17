@@ -1,25 +1,166 @@
 ---
 title: "Reproducible Research: Peer Assessment 1"
-output: 
-  html_document:
-    keep_md: true
+author: rudini1
+date: "15.12.2017"
+output: html_document
+keep_md: true
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
 
 ## Loading and preprocessing the data
 
+The file can be downloaded at the specified site. Alternatively the file is also located on the GitHub repository cloned.
+```{r message=FALSE, warning=FALSE}
+if(!file.exists("activity.csv")){
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip", "activitymonitoringdatafile.zip")
+unzip("activitymonitoringdatafile.zip")
+}
+library(data.table)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+
+# Sys.setlocale("LC_ALL","En") # this is necessary for the weekdays to be in english on a non-english system
+# Sys.setenv(LANG = "en")
+
+activity <- fread("activity.csv", header = TRUE, sep = ",", na.strings = "NA") %>%
+mutate(date = as.POSIXct(date, "%Y-%m-%d"))
+
+```
 
 
 ## What is mean total number of steps taken per day?
 
+```{r}
 
+totalstepsperday <- activity %>%
+      group_by(date) %>%
+      summarise(totalsteps = sum(steps, na.rm = TRUE))
+
+# ggplot(data = totalstepsperday, aes(x =  date, y= totalsteps)) + geom_col()
+ggplot(data = totalstepsperday, aes(x = totalsteps)) + 
+      geom_histogram(na.rm = TRUE) +
+      theme_bw()
+
+meanstepsperday <- round(mean(totalstepsperday$totalsteps), 0)
+medianstepsperday <- median(totalstepsperday$totalsteps)
+```
+
+ - The median of the steps per day is : `r medianstepsperday`
+ - The mean of the steps per day is : `r meanstepsperday`
 
 ## What is the average daily activity pattern?
 
+Average activity vs. time in the day. The time is given in the interval column as minutes after midnight
 
+```{r}
+averagestepsperinterval <- activity %>% 
+      group_by(interval) %>% 
+      summarise(meanstepsperinterval = mean(steps, na.rm = TRUE))
+
+ggplot(data = averagestepsperinterval, aes(x = seq(from = 0, by = 5/60, along.with = interval), y = meanstepsperinterval)) + 
+      geom_line() +
+      # geom_smooth(method = "loess", span = 0.05, se = FALSE) +
+      theme_bw() +
+      labs(x = "average day (h)", y = "average steps over all days")
+
+```
+
+```{r echo=TRUE, results="hide"}
+      maxsteps <- averagestepsperinterval[which.max(averagestepsperinterval$meanstepsperinterval),]$interval
+```
+
+The interval with maximum average steps is : `r maxsteps` what is 8:35 in the morning
 
 ## Imputing missing values
 
+first find the number of rows with missing (NA) values. This is equal to the number of rows that are not complete
+
+```{r}
+missingValues <- sum(!complete.cases(activity))
+```
+there are `r missingValues` rows with missing values (from a total of `r dim(activity)[1]`)
+
+imputing missing values: strategy is to use the average steps of the intervals computed in the previous steps
+so for missing days, the average corresponding to the time interval is imputed
+
+```{r}
+activity %>% 
+  select_if(function(x) any(is.na(x))) %>%  # select the columns with NA
+  summarise_each(funs(sum(is.na(.))))  # sum the NA's on the selected columns
+```
+only the variable "steps" contains missing values
+the next code block imputes the missing values in variable "steps"
+```{r}
+nas <- which(is.na(activity$steps))
+corrs <- match(activity$interval, averagestepsperinterval$interval) # same as rep(1:288, times = 61)
+activityImputed <- activity # first copy all data 
+activityImputed[nas,1] <- averagestepsperinterval[corrs[nas],2] # automatic coercion of steps form int to num 
+```
+
+next code makes a histogram of the total steps per day as in the beginningm, but with the imputed dataset
+```{r}
+totalstepsperdayimputed <- activityImputed %>%
+      group_by(date) %>%
+      summarise(totalsteps = sum(steps, na.rm = TRUE))
+
+# ggplot(data = totalstepsperdayimputed, aes(x =  date, y= totalsteps)) + geom_col()
+ggplot(data = totalstepsperdayimputed, aes(x = totalsteps)) + 
+      geom_histogram(na.rm = TRUE) +
+      theme_bw()
+
+meanstepsperdayimp <- round(mean(totalstepsperdayimputed$totalsteps), 0)
+medianstepsperdayimp <- median(totalstepsperdayimputed$totalsteps)
+```
+
+There were days full of NA's giving a large number of days with zero steps. so the histogram differes in the nummer of days with zero steps when using imputed set.
+
+ - The median of the steps per day is : `r sprintf("%.0f", medianstepsperdayimp)`
+ - The mean of the steps per day is : `r sprintf("%.0f", meanstepsperdayimp)`  
+ 
+The distribution is now much more symmetric with both, median and mean beeing the same and different from the non-imputed data
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+```{r}
+# Definitions
+weekend <- c("Samstag","Sonntag")  # I had to use the german words for saturday and Sunday here you have to use the words in your locale. I didn't find how to change it to english locale on my system
+
+# weekday v. weekend
+activityImputed <- activityImputed %>% 
+      mutate(isweekend = if_else(weekdays(date) %in% weekend, "weekend", "weekday")) %>% 
+      mutate(isweekend = as.factor(isweekend))
+# table(activityImputed$isweekend)
+
+
+stepsWeek <- activityImputed[activityImputed$isweekend == "weekday",]
+stepsWeekend <- activityImputed[activityImputed$isweekend == "weekend",]
+
+totalstepsperworkday <- stepsWeek %>% group_by(interval) %>%
+      summarise(avgsteps=mean(steps, na.rm = TRUE))
+
+totalstepsperweekendday <- stepsWeekend %>% group_by(interval) %>%
+      summarise(avgsteps=mean(steps, na.rm = TRUE))
+```
+
+Plot the data
+```{r}
+par(mfrow=c(2,1),
+    mar = c(1,1,1,1),
+    oma = c(1,1,1,1))
+with(totalstepsperweekendday, 
+     plot(interval, avgsteps, type = "l", xlim = c(0,2400), ylim = c(0,250)))
+title("average number of steps on weekends", line = -1)
+with(totalstepsperworkday, 
+     plot(interval, avgsteps, type = "l", xlim = c(0,2400), ylim = c(0,250)))
+title("average number of steps on workdays", line = -1)
+
+```
+
+we see, that on workdays, the activity peaks higher around 8:30 than on weekends. However, on weekends activity is generally higher around noon and in the afternoon
+
+
